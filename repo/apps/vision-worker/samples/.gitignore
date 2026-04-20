@@ -1,0 +1,7 @@
+# Prevent real face images from being committed
+*.jpg
+*.jpeg
+*.png
+*.bmp
+*.tiff
+*.gif

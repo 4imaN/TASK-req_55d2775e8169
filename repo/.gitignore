@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.env
+*.log
+uploads/
+backups/
+docker/certs/
+.vite/
+__pycache__/
+*.pyc
+.pytest_cache/
+coverage/
+.DS_Store

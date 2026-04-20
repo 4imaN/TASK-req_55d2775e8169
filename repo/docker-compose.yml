@@ -1,0 +1,211 @@
+services:
+  # ── Auto-generate .env on first run ─────────────────────
+  env-init:
+    image: alpine:3.19
+    container_name: studyroomops-env-init
+    volumes:
+      - .:/workspace
+      - ./docker/env-init.sh:/env-init.sh:ro
+    entrypoint: ["sh", "/env-init.sh"]
+    restart: "no"
+
+  # ── MongoDB Replica Set ─────────────────────────────────
+  mongo1:
+    image: mongo:7
+    container_name: studyroomops-mongo1
+    command: mongod --replSet rs0 --port 27017 --bind_ip_all
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo1_data:/data/db
+    networks:
+      - studyroomops
+    healthcheck:
+      test: mongosh --eval "db.adminCommand('ping')" --quiet
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  mongo2:
+    image: mongo:7
+    container_name: studyroomops-mongo2
+    command: mongod --replSet rs0 --port 27018 --bind_ip_all
+    ports:
+      - "27018:27018"
+    volumes:
+      - mongo2_data:/data/db
+    networks:
+      - studyroomops
+    healthcheck:
+      test: mongosh --port 27018 --eval "db.adminCommand('ping')" --quiet
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  mongo3:
+    image: mongo:7
+    container_name: studyroomops-mongo3
+    command: mongod --replSet rs0 --port 27019 --bind_ip_all
+    ports:
+      - "27019:27019"
+    volumes:
+      - mongo3_data:/data/db
+    networks:
+      - studyroomops
+    healthcheck:
+      test: mongosh --port 27019 --eval "db.adminCommand('ping')" --quiet
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  mongo-init:
+    image: mongo:7
+    container_name: studyroomops-mongo-init
+    depends_on:
+      mongo1:
+        condition: service_healthy
+      mongo2:
+        condition: service_healthy
+      mongo3:
+        condition: service_healthy
+    volumes:
+      - ./docker/mongo-init.js:/docker-entrypoint-initdb.d/init.js:ro
+    entrypoint: >
+      bash -c "
+        echo 'Waiting for all MongoDB nodes...' &&
+        sleep 3 &&
+        mongosh --host mongo1:27017 /docker-entrypoint-initdb.d/init.js &&
+        echo 'Replica set initialized successfully'
+      "
+    networks:
+      - studyroomops
+    restart: "no"
+
+  # ── Seed Data (runs once, auto-skips if already seeded) ─
+  seed:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    container_name: studyroomops-seed
+    command: npx tsx src/seed.ts
+    environment:
+      - MONGO_URI=mongodb://mongo1:27017,mongo2:27018,mongo3:27019/studyroomops?replicaSet=rs0
+      - MONGO_DB_NAME=studyroomops
+      - SITE_TIMEZONE=America/Los_Angeles
+    volumes:
+      - .:/workspace:ro
+    depends_on:
+      env-init:
+        condition: service_completed_successfully
+      mongo-init:
+        condition: service_completed_successfully
+    networks:
+      - studyroomops
+    restart: "no"
+
+  # ── API Server ──────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    container_name: studyroomops-api
+    ports:
+      - "4001:3001"
+    environment:
+      - MONGO_URI=mongodb://mongo1:27017,mongo2:27018,mongo3:27019/studyroomops?replicaSet=rs0
+      - MONGO_DB_NAME=studyroomops
+      - CORS_ORIGIN=http://localhost:4000
+      - VISION_WORKER_URL=http://vision-worker:5000
+      - SITE_TIMEZONE=America/Los_Angeles
+      - API_PORT=3001
+      - LOG_LEVEL=info
+    volumes:
+      - .:/workspace:ro
+      - uploads_data:/app/apps/api/uploads
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+    networks:
+      - studyroomops
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3001/api/v1/health').then(r=>{if(!r.ok)throw 1})"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    restart: unless-stopped
+
+  # ── Web Frontend ────────────────────────────────────────
+  web:
+    build:
+      context: .
+      dockerfile: docker/web.Dockerfile
+    container_name: studyroomops-web
+    ports:
+      - "4000:3000"
+    environment:
+      - API_INTERNAL_URL=http://api:3001
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - studyroomops
+    restart: unless-stopped
+
+  # ── Nginx HTTPS Reverse Proxy ───────────────────────────
+  nginx:
+    image: nginx:alpine
+    container_name: studyroomops-nginx
+    ports:
+      - "443:443"
+      - "80:80"
+    volumes:
+      - ./docker/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./docker/nginx-entrypoint.sh:/docker-entrypoint.d/nginx-entrypoint.sh:ro
+      - nginx_certs:/etc/nginx/certs
+    entrypoint: ["sh", "/docker-entrypoint.d/nginx-entrypoint.sh"]
+    depends_on:
+      api:
+        condition: service_healthy
+      web:
+        condition: service_started
+    networks:
+      - studyroomops
+    restart: unless-stopped
+
+  # ── Vision Worker (optional — start with --profile vision)
+  vision-worker:
+    build:
+      context: .
+      dockerfile: docker/vision.Dockerfile
+    container_name: studyroomops-vision
+    ports:
+      - "5000:5000"
+    environment:
+      - MONGO_URI=mongodb://mongo1:27017,mongo2:27018,mongo3:27019/studyroomops?replicaSet=rs0
+      - FACE_CONFIDENCE_THRESHOLD=0.82
+    volumes:
+      - .:/workspace:ro
+    entrypoint: ["sh", "-c", "if [ -f /workspace/.env ]; then set -a; . /workspace/.env; set +a; fi; exec python src/main.py"]
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - studyroomops
+    profiles:
+      - vision
+    restart: unless-stopped
+
+volumes:
+  mongo1_data:
+  mongo2_data:
+  mongo3_data:
+  uploads_data:
+  nginx_certs:
+
+networks:
+  studyroomops:
+    driver: bridge

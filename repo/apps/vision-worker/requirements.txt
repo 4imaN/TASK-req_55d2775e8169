@@ -1,0 +1,23 @@
+# StudyRoomOps Vision Worker – Python dependencies
+# Pinned for reproducible builds. Update deliberately.
+
+# Web framework
+flask==3.0.2
+werkzeug==3.0.1
+
+# Computer vision
+opencv-python-headless==4.9.0.80
+numpy==1.26.4
+
+# Database
+pymongo==4.6.2
+
+# Cryptography (AES-256-GCM)
+cryptography==42.0.5
+
+# WSGI server (production)
+gunicorn==21.2.0
+
+# Testing
+pytest==8.1.1
+pytest-cov==5.0.0
