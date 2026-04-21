@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:e2e": "node ../api/node_modules/.bin/jest --config jest.e2e.config.cjs --runInBand --forceExit",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

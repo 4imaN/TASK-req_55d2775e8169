@@ -17,6 +17,10 @@ COPY apps/api/tsconfig.json .
 COPY apps/api/jest.config.js .
 COPY apps/api/tests/ tests/
 
+# Copy E2E tests (they import the API app directly)
+COPY apps/web/tests/e2e/ /app/apps/web/tests/e2e/
+COPY apps/web/jest.e2e.config.cjs /app/apps/web/jest.e2e.config.cjs
+
 # Create uploads directory
 RUN mkdir -p uploads
 

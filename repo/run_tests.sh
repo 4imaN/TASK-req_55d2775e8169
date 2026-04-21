@@ -59,12 +59,33 @@ run_api_tests() {
   echo "API tests complete."
 }
 
+run_e2e_tests() {
+  echo ""
+  echo "Running Frontend E2E Tests..."
+  echo "-----------------------------"
+  # E2E tests boot the real Express API and hit real endpoints.
+  # They run inside the API container (which has all dependencies)
+  # with access to the MongoDB replica set.
+  docker compose run --rm \
+    -e NODE_ENV=test \
+    -e MONGO_URI=mongodb://mongo1:27017,mongo2:27018,mongo3:27019/studyroomops_e2e_test?replicaSet=rs0 \
+    -e MONGO_DB_NAME=studyroomops_e2e_test \
+    -e JWT_SECRET=test-jwt-secret-that-is-at-least-64-characters-long-for-testing-purposes \
+    -e CSRF_SECRET=test-csrf-secret \
+    -e FIELD_ENCRYPTION_KEY=test-field-encryption-key-32chars \
+    -e FILE_ENCRYPTION_KEY=test-file-encryption-key-32chars! \
+    -e SITE_TIMEZONE=America/Los_Angeles \
+    -w /app/apps/web \
+    api npx jest --config jest.e2e.config.cjs --runInBand --forceExit
+  echo "E2E tests complete."
+}
+
 run_web_tests() {
   echo ""
-  echo "Running Web Frontend Tests..."
-  echo "-----------------------------"
+  echo "Running Web Frontend Unit Tests..."
+  echo "-----------------------------------"
   docker compose run --rm web npm test
-  echo "Web tests complete."
+  echo "Web unit tests complete."
 }
 
 case "$TARGET" in
@@ -74,12 +95,22 @@ case "$TARGET" in
   web)
     run_web_tests
     ;;
+  e2e)
+    run_e2e_tests
+    ;;
   all)
-    run_api_tests
-    run_web_tests
+    FAILURES=0
+    run_api_tests  || FAILURES=$((FAILURES + 1))
+    run_web_tests  || FAILURES=$((FAILURES + 1))
+    run_e2e_tests  || FAILURES=$((FAILURES + 1))
+    echo ""
+    if [ "$FAILURES" -gt 0 ]; then
+      echo "$FAILURES test suite(s) failed."
+      exit 1
+    fi
     ;;
   *)
-    echo "Usage: $0 [api|web|all]"
+    echo "Usage: $0 [api|web|e2e|all]"
     exit 1
     ;;
 esac
